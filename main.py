@@ -49,7 +49,7 @@ while cap.isOpened():
         #Extrae la lista de puntos de la primera persona detectada
         puntos = results[0].keypoints.xy[0]
 
-        if len(puntos) > 6:
+        if len(puntos) > 10:
             hombro_izq_x = int(puntos[5][0])
             hombro_izq_y = int(puntos[5][1])
 
@@ -67,25 +67,61 @@ while cap.isOpened():
             ojo_der_y = int(puntos[2][1])
 
             distancia_manos = abs(muneca_izq_x - muneca_der_x)
+            #mide la distancia vetical para ver si hay tensión en los hombros
             distancia_oreja_hombro_izq = hombro_izq_y - oreja_izq_y
             distancia_oreja_hombro_der = hombro_der_y - oreja_der_y
 
             postura_actual = "Normal"
 
-            #pinta la postura
-            if distancia_manos < 60 and muneca_izq_x > 0 and muneca_der_x > 0:
+            #=============POSTURA================
+
+            # Regla 1: Si subes las manos por encima de los ojos -> Ansiedad
+            # Regla 2: Si los hombros se acercan demasiado a las orejas -> Tensión
+            # Regla 3: Si las manos se juntan en el pecho -> Brazos Cruzados
+
+            if(muneca_izq_y < ojo_izq_y and muneca_izq_y > 0) or (muneca_der_y < ojo_der_y and muneca_der_y >0):
+                postura_actual = "Manos en la Cara (Ansiedad)"
+            elif (distancia_oreja_hombro_izq < 45 and distancia_oreja_hombro_izq > 0) or \
+                 (distancia_oreja_hombro_der < 45 and distancia_oreja_hombro_der > 0):
+                postura_actual = "Hombros Encogidos (Tensión)"
+            elif distancia_manos < 60 and muneca_izq_x > 0 and muneca_der_x > 0:
                 postura_actual = "Brazos Cruzados"
 
-            color = (0, 0, 255) if postura_actual == "Brazos Cruzados" else (0, 255, 0)
+
+            # linea de color
+            color = (0, 255, 0) if postura_actual == "Normal" else (0, 0, 255)
             cv2.putText(frame, f"Postura: {postura_actual}", (30, 60), 
                         cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2, cv2.LINE_AA)
+            
+            # ==========DIBUJAR PUNTOS DE ANÁLISIS EN PANTALLA
+            # Dibujamos círculos en los Ojos (Color Azul)
+            cv2.circle(frame, (int(puntos[1][0]), ojo_izq_y), 5, (255, 0, 0), -1)
+            cv2.circle(frame, (int(puntos[2][0]), ojo_der_y), 5, (255, 0, 0), -1)
+            
+            # Dibujamos círculos en las Orejas (Color Rosa)
+            cv2.circle(frame, (int(puntos[3][0]), oreja_izq_y), 5, (255, 0, 255), -1)
+            cv2.circle(frame, (int(puntos[4][0]), oreja_der_y), 5, (255, 0, 255), -1)
+            
+            # Dibujamos círculos y textos en los Hombros (Color Amarillo)
+            cv2.circle(frame, (hombro_izq_x, hombro_izq_y), 6, (0, 255, 255), -1)
+            cv2.putText(frame, f"H_Izq (Y:{hombro_izq_y})", (hombro_izq_x + 10, hombro_izq_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+            cv2.circle(frame, (hombro_der_x, hombro_der_y), 6, (0, 255, 255), -1)
+            cv2.putText(frame, f"H_Der (Y:{hombro_der_y})", (hombro_der_x - 110, hombro_der_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
 
+            # Dibujamos círculos y textos en las Muñecas (Color Naranja)
+            cv2.circle(frame, (muneca_izq_x, muneca_izq_y), 6, (0, 165, 255), -1)
+            cv2.putText(frame, f"M_Izq (Y:{muneca_izq_y})", (muneca_izq_x + 10, muneca_izq_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
+            cv2.circle(frame, (muneca_der_x, muneca_der_y), 6, (0, 165, 255), -1)
+            cv2.putText(frame, f"M_Der (Y:{muneca_der_y})", (muneca_der_x - 110, muneca_der_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
+            #========================== 
+            
             #si mantiene la misma postura que en el fotograma anterior
             if postura_actual == gesto_anterior:
                 tiempo_transcurrido = time.time() - tiempo_inicio
 
-                #si lleva mas de 2seg con los brazos cruzadps 
-                if(tiempo_transcurrido >= 2.0) and (accion_ejecutada == False) and (postura_actual == "Brazos Cruzados"):
+                # Se activa con cualquier postura de riesgo que dure 2 segundos
+                if (tiempo_transcurrido >= 2.0) and (accion_ejecutada == False) and (postura_actual != "Normal"):
+                   
                     cv2.imwrite("captura_corregida.jpg", frame)
                     print("Imagen 'captura_corregida.jpg' guardada con éxito.")
             
