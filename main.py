@@ -17,6 +17,10 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 tiempo_inicio = time.time()
 gesto_anterior = "Normal"
 accion_ejecutada = False  # Indica si la IA está procesando actualmente
+historial_posturas = []
+tiempo_ultimo_reporte = time.time()
+INTERVALO_REPORTE = 60
+
 
 def enviar_mesaje_telegram(postura, texto_informe):
     try:
@@ -34,39 +38,44 @@ def enviar_mesaje_telegram(postura, texto_informe):
         print(f"❌ Error al enviar el mensaje de Telegram: {error_tel}")
 
 # ==================== FUNCIÓN DE IA ====================
+
 def enviar_a_ollama_local(postura_detectada):
     global accion_ejecutada, tiempo_inicio
     
-    print(f"🧠 [HILO] Iniciando análisis con Qwen2.5-VL para: {postura_detectada}...")
+    print(f"🧠 [HILO] Enviando análisis remoto a 192.168.30.197 con Qwen2.5-VL...")
 
     prompt_conductual = (
-        f"Actúa como un experto en psicología organizacional y comunicación no verbal.\n"
-        f"Analiza la situación de un candidato en una {CONTEXTO_ENTREVISTA}.\n"
-        f"Nuestro sistema de visión artificial local ha detectado geométricamente la postura: '{postura_detectada}'.\n"
-        f"Evalúa la imagen adjunta. Analiza sutilmente la tensión y ofrécele 3 consejos prácticos de comunicación no verbal."
+        f"Actúa como un experto en psicología organizacional.\n"
+        f"Durante el último minuto de la {CONTEXTO_ENTREVISTA}, el candidato ha mostrado "
+        f"las siguientes conductas acumuladas: '{postura_detectada}'.\n"
+        f"Haz un único informe ejecutivo que resuma estas señales y dale 3 consejos generales."
     )
 
     try:
+        ruta_absoluta = os.path.abspath("captura_corregida.jpg")
+        
+        # 1️⃣ Inicializamos el cliente apuntando a la IP de tu servidor remoto
+        cliente_remoto = ollama.Client(host='http://192.168.30.197:11434')
 
-        # Petición local al modelo multimodal Qwen
-        response = ollama.chat(
-            model='qwen2.5vl:3b', 
+        # 2️⃣ Hacemos la petición utilizando el 'cliente_remoto' en vez de 'ollama.chat'
+        response = cliente_remoto.chat(
+            model='gemma4:31b', 
             messages=[{
                 'role': 'user',
                 'content': prompt_conductual,
-                'images': ['captura_corregida.jpg']
+                'images': [ruta_absoluta]
             }]
         )
         
         texto_ia = response['message']['content']
         
-        print("\n================ 🦙 INFORME CONDUCTUAL DE QWEN LOCAL ================")
+        print("\n================ 🦙 INFORME CONDUCTUAL DE QWEN REMOTO ================")
         print(texto_ia)
         print("======================================================================\n")
         
         # --- ENVIAR ALERTA POR TELEGRAM ---
         print("🚀 [HILO] Enviando reporte y captura a Telegram...")
-        texto_telegram = f"⚠️ *ALERTA DE LENGUAJE NO VERBAL*\n\nPostura detectada: *{postura_detectada}*\n\n{texto_ia}"
+        texto_telegram = f"⚠️ *ALERTA DE LENGUAJE NO VERBAL*\n\nConductas detectadas: *{postura_detectada}*\n\n{texto_ia}"
         
         with open("captura_corregida.jpg", "rb") as foto:
             bot.send_photo(CHAT_ID, foto, caption=texto_telegram[:1024], parse_mode="Markdown")
@@ -77,19 +86,14 @@ def enviar_a_ollama_local(postura_detectada):
         print("✅ [HILO] ¡Todo enviado a Telegram correctamente!")
 
     except Exception as e:
-        # IMPORTANTE: Si Telegram o Ollama fallan, este print te dirá el motivo exacto en la consola
-        print(f"❌ [HILO] Error crítico en el procesamiento: {e}")
+        print(f"❌ [HILO] Error crítico en el procesamiento remoto: {e}")
     
-    # Pausa de seguridad antes de permitir que el sistema vuelva a enviar otra foto
     print("⏱️ [HILO] Iniciando pausa de seguridad de 10 segundos...")
     time.sleep(10)
     
-    # Al terminar la pausa, reiniciamos el reloj y liberamos el candado
     tiempo_inicio = time.time()
     accion_ejecutada = False
-    print("🔓[HILO] Sistema liberado. Listo para detectar nuevas posturas.")
-
-
+    print("🔓 [HILO] Sistema liberado. Listo para detectar nuevas posturas.")
 # ==================== INICIALIZACIÓN DE MODELOS ====================
 model = YOLO("yolov8n-pose.pt")
 cap = cv2.VideoCapture(0)
@@ -169,20 +173,15 @@ while cap.isOpened():
 
             # --- CONTROL DE DISPARO CON HILOS ---
             if postura_actual == gesto_anterior:
-                # Solo contamos el tiempo si el hilo secundario no está trabajando
                 if not accion_ejecutada:
                     tiempo_transcurrido = time.time() - tiempo_inicio
 
                     if (tiempo_transcurrido >= 2.0) and (postura_actual != "Normal"):
-                        print(f"📸 ¡Postura '{postura_actual}' mantenida por 2s! Guardando captura...")
-                        cv2.imwrite("captura_corregida.jpg", frame)
+                        print(f"📌 Registrando en historial: {postura_actual}")
+                        historial_posturas.append(postura_actual)
                         
-                        # Activamos el candado inmediatamente para que el 'while' no cree 1000 hilos seguidos
-                        accion_ejecutada = True 
-                        
-                        # Lanzamos el proceso en segundo plano
-                        hilo_ia = threading.Thread(target=enviar_a_ollama_local, args=(postura_actual,))
-                        hilo_ia.start()
+                        # SOLO reiniciamos el reloj para poder capturar el siguiente gesto 2 segundos después
+                        tiempo_inicio = time.time()
             
             elif postura_actual != gesto_anterior:
                 # Si cambias de postura y el sistema no está procesando, reiniciamos el cronómetro
@@ -190,10 +189,35 @@ while cap.isOpened():
                     tiempo_inicio = time.time()
                     gesto_anterior = postura_actual
 
-    cv2.imshow('Lector de Postura', frame)
+            # === REVISIÓN DEL INTERVALO GLOBAL (CADA 60 SEGUNDOS) ===
+            if time.time() - tiempo_ultimo_reporte >= INTERVALO_REPORTE:
+                tiempo_ultimo_reporte = time.time()  # Reiniciamos el reloj aquí
 
-    if cv2.waitKey(1) & 0xFF == ord('q'): 
-        break
+                # Solo entramos si hay datos acumulados y la IA no está ocupada
+                if len(historial_posturas) > 0 and not accion_ejecutada:  
+                    print("📊 ¡Intervalo cumplido! Preparando reporte resumen para Ollama...")
+                    
+                    # 1. Guardamos con el nombre EXACTO que busca Ollama arriba
+                    cv2.imwrite("captura_corregida.jpg", frame) 
+
+                    # Convertimos la lista de posturas en un solo texto para la IA
+                    resumen_gestos = ", ".join(set(historial_posturas)) 
+
+                    # 2. ACTIVAMOS EL CANDADO para proteger tu procesador mientras Ollama piensa
+                    accion_ejecutada = True 
+
+                    # Lanzamos el hilo enviando el resumen acumulado
+                    hilo_ia = threading.Thread(target=enviar_a_ollama_local, args=(resumen_gestos,))
+                    hilo_ia.start()
+
+                    # Limpiamos el historial para el próximo ciclo
+                    historial_posturas.clear()
+
+
+        cv2.imshow('Lector de Postura', frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'): 
+            break
 
 cap.release()
 cv2.destroyAllWindows()
