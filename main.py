@@ -21,17 +21,31 @@ historial_posturas = []
 tiempo_ultimo_reporte = time.time()
 INTERVALO_REPORTE = 60
 
+# --- FUNCIÓN AUXILIAR PARA EVITAR ERRORES DE PARSEO ---
+def limpiar_texto_html(texto):
+    """Reemplaza caracteres conflictivos y convierte las negritas de Ollama a HTML"""
+    if not texto:
+        return ""
+    # Escapar caracteres HTML obligatorios
+    texto = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Convertir las negritas de Ollama (**texto**) al formato HTML (<b>texto</b>)
+    import re
+    texto = re.sub(r"\*\*(.*?)\*\* ", r"<b>\1</b>", texto)
+    texto = re.sub(r"\*(.*?)\* ", r"<i>\1</i>", texto)
+    return texto
 
 def enviar_mesaje_telegram(postura, texto_informe):
     try:
         print("Enviando reporte y captura a Telegram...")
-        texto_telegram = f"⚠️ *ALERTA DE LENGUAJE NO VERBAL*\n\nPostura detectada: *{postura}*\n\n{texto_informe}"
+        # Limpiamos el informe de Ollama para cumplir con HTML
+        texto_limpio = limpiar_texto_html(texto_informe)
+        texto_telegram = f"⚠️ <b>ALERTA DE LENGUAJE NO VERBAL</b>\n\nPostura detectada: <b>{postura}</b>\n\n{texto_limpio}"
 
         with open("captura_corregida.jpg", "rb") as foto:
-            bot.send_photo(CHAT_ID, foto, caption=texto_telegram[:1024], parse_mode="Markdown")
+            bot.send_photo(CHAT_ID, foto, caption=texto_telegram[:1024], parse_mode="HTML")
             
         if len(texto_telegram) > 1024:
-            bot.send_message(CHAT_ID, texto_telegram, parse_mode="Markdown")
+            bot.send_message(CHAT_ID, texto_telegram, parse_mode="HTML")
             
         print("✅ ¡Todo enviado a Telegram correctamente!")
     except Exception as error_tel:
@@ -45,7 +59,7 @@ def enviar_a_ollama_local(postura_detectada):
     print(f"🧠 [HILO] Enviando análisis remoto a 192.168.30.197 con Qwen2.5-VL...")
 
     prompt_conductual = (
-        f"Actúa como un experto en psicología organizacional.\n"
+        f"Actúa como un expertó en psicología organizacional.\n"
         f"Durante el último minuto de la {CONTEXTO_ENTREVISTA}, el candidato ha mostrado "
         f"las siguientes conductas acumuladas: '{postura_detectada}'.\n"
         f"Haz un único informe ejecutivo que resuma estas señales y dale 3 consejos generales."
@@ -73,15 +87,18 @@ def enviar_a_ollama_local(postura_detectada):
         print(texto_ia)
         print("======================================================================\n")
         
-        # --- ENVIAR ALERTA POR TELEGRAM ---
+        # --- ENVIAR ALERTA POR TELEGRAM (CORREGIDO CON HTML Y LIMPIEZA) ---
         print("🚀 [HILO] Enviando reporte y captura a Telegram...")
-        texto_telegram = f"⚠️ *ALERTA DE LENGUAJE NO VERBAL*\n\nConductas detectadas: *{postura_detectada}*\n\n{texto_ia}"
+        texto_ia_limpio = limpiar_texto_html(texto_ia)
+        texto_telegram = f"⚠️ <b>ALERTA DE LENGUAJE NO VERBAL</b>\n\nConductas detectadas: <b>{postura_detectada}</b>\n\n{texto_ia_limpio}"
         
         with open("captura_corregida.jpg", "rb") as foto:
-            bot.send_photo(CHAT_ID, foto, caption=texto_telegram[:1024], parse_mode="Markdown")
+            # Enviamos la foto con los primeros 1024 caracteres permitidos en el caption
+            bot.send_photo(CHAT_ID, foto, caption=texto_telegram[:1024], parse_mode="HTML")
             
+        # Si el informe completo supera los 1024 caracteres, enviamos el resto (o todo) en un mensaje de texto dedicado
         if len(texto_telegram) > 1024:
-            bot.send_message(CHAT_ID, texto_telegram, parse_mode="Markdown")
+            bot.send_message(CHAT_ID, texto_telegram, parse_mode="HTML")
             
         print("✅ [HILO] ¡Todo enviado a Telegram correctamente!")
 
@@ -94,6 +111,7 @@ def enviar_a_ollama_local(postura_detectada):
     tiempo_inicio = time.time()
     accion_ejecutada = False
     print("🔓 [HILO] Sistema liberado. Listo para detectar nuevas posturas.")
+
 # ==================== INICIALIZACIÓN DE MODELOS ====================
 model = YOLO("yolov8n-pose.pt")
 cap = cv2.VideoCapture(0)
@@ -149,7 +167,7 @@ while cap.isOpened():
             if (ojo_izq_y < muneca_izq_y < hombro_izq_y) or (ojo_der_y < muneca_der_y < hombro_der_y):
                 postura_actual = "Contacto de manos en la cara o cuello (Ansiedad sutil)"
             elif (distancia_oreja_hombro_izq < escala_referencia * 0.7) or (distancia_oreja_hombro_der < escala_referencia * 0.7):
-                postura_actual = "Hombros levemente elevados y rígidos (Tensión)"
+                postura_actual = "Hombros levemente elevados y rigidos (Tensión)"
             elif distancia_manos < (escala_referencia * 0.8):
                 if muneca_izq_y < (hombro_izq_y + 40):
                     postura_actual = "Brazos cruzados en el pecho (Defensivo)"
@@ -212,7 +230,6 @@ while cap.isOpened():
 
                     # Limpiamos el historial para el próximo ciclo
                     historial_posturas.clear()
-
 
         cv2.imshow('Lector de Postura', frame)
 
